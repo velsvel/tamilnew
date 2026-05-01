@@ -1,0 +1,553 @@
+import { useState, useEffect } from "react";
+
+const STORAGE_KEY = "tamil-movies-list";
+
+const DEFAULT_MOVIES = [];
+
+function toPlayLink(imdbUrl) {
+  return imdbUrl.replace("www.imdb.com", "www.playimdb.com").replace("imdb.com", "playimdb.com");
+}
+
+function extractImdbId(url) {
+  const match = url.match(/\/title\/(tt\d+)/);
+  return match ? match[1] : null;
+}
+
+function getPosterUrl(imdbId) {
+  return `https://img.omdbapi.com/?i=${imdbId}&apikey=trilogy&h=400`;
+}
+
+const filmGrain = `
+  <svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'>
+    <filter id='noise'>
+      <feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/>
+      <feColorMatrix type='saturate' values='0'/>
+    </filter>
+    <rect width='200' height='200' filter='url(#noise)' opacity='0.04'/>
+  </svg>
+`;
+
+export default function TamilMovies() {
+  const [movies, setMovies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [formMode, setFormMode] = useState("imdb"); // "imdb" | "manual"
+  const [imdbInput, setImdbInput] = useState("");
+  const [manualForm, setManualForm] = useState({ title: "", image: "", imdbUrl: "", year: "" });
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    loadMovies();
+  }, []);
+
+  async function loadMovies() {
+    setLoading(true);
+    try {
+      const result = await window.storage.get(STORAGE_KEY);
+      if (result && result.value) {
+        setMovies(JSON.parse(result.value));
+      } else {
+        setMovies(DEFAULT_MOVIES);
+      }
+    } catch {
+      setMovies(DEFAULT_MOVIES);
+    }
+    setLoading(false);
+  }
+
+  async function saveMovies(updated) {
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+      showToast("⚠️ Save failed", "error");
+    }
+  }
+
+  function showToast(msg, type = "success") {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  async function handleAddImdb() {
+    const url = imdbInput.trim();
+    if (!url.includes("imdb.com")) {
+      showToast("Please enter a valid IMDB link", "error");
+      return;
+    }
+    const imdbId = extractImdbId(url);
+    if (!imdbId) {
+      showToast("Could not find IMDB title ID", "error");
+      return;
+    }
+    setSaving(true);
+    // Try to fetch movie details via OMDB API (free tier)
+    let title = "Unknown Title";
+    let year = "";
+    let poster = "";
+    try {
+      const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=b9bd48a6`);
+      const data = await res.json();
+      if (data.Response === "True") {
+        title = data.Title || "Unknown Title";
+        year = data.Year || "";
+        poster = data.Poster && data.Poster !== "N/A" ? data.Poster : "";
+      }
+    } catch {}
+
+    const newMovie = {
+      id: Date.now().toString(),
+      title,
+      year,
+      poster,
+      imdbUrl: url,
+      playUrl: toPlayLink(url),
+      addedAt: new Date().toISOString(),
+    };
+    const updated = [newMovie, ...movies];
+    setMovies(updated);
+    await saveMovies(updated);
+    setImdbInput("");
+    setShowForm(false);
+    setSaving(false);
+    showToast(`✅ "${title}" added!`);
+  }
+
+  async function handleAddManual() {
+    if (!manualForm.title.trim()) {
+      showToast("Title is required", "error");
+      return;
+    }
+    if (!manualForm.imdbUrl.trim().includes("imdb.com")) {
+      showToast("Please enter a valid IMDB URL", "error");
+      return;
+    }
+    setSaving(true);
+    const newMovie = {
+      id: Date.now().toString(),
+      title: manualForm.title.trim(),
+      year: manualForm.year.trim(),
+      poster: manualForm.image.trim(),
+      imdbUrl: manualForm.imdbUrl.trim(),
+      playUrl: toPlayLink(manualForm.imdbUrl.trim()),
+      addedAt: new Date().toISOString(),
+    };
+    const updated = [newMovie, ...movies];
+    setMovies(updated);
+    await saveMovies(updated);
+    setManualForm({ title: "", image: "", imdbUrl: "", year: "" });
+    setShowForm(false);
+    setSaving(false);
+    showToast(`✅ "${newMovie.title}" added!`);
+  }
+
+  async function handleDelete(id) {
+    const updated = movies.filter((m) => m.id !== id);
+    setMovies(updated);
+    await saveMovies(updated);
+    setDeleteConfirm(null);
+    showToast("🗑️ Movie removed");
+  }
+
+  const filtered = movies.filter((m) =>
+    m.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "#0a0a0f",
+      color: "#f0e6d3",
+      fontFamily: "'Georgia', 'Times New Roman', serif",
+      position: "relative",
+      overflow: "hidden",
+    }}>
+      {/* Grain overlay */}
+      <div style={{
+        position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0,
+        backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(filmGrain)}")`,
+        backgroundRepeat: "repeat", opacity: 0.6,
+      }} />
+
+      {/* Radial glow */}
+      <div style={{
+        position: "fixed", top: "-20%", left: "50%", transform: "translateX(-50%)",
+        width: "80vw", height: "50vh", borderRadius: "50%",
+        background: "radial-gradient(ellipse, rgba(180,30,30,0.12) 0%, transparent 70%)",
+        pointerEvents: "none", zIndex: 0,
+      }} />
+
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 1200, margin: "0 auto", padding: "0 20px 60px" }}>
+
+        {/* Header */}
+        <header style={{ textAlign: "center", padding: "50px 0 30px" }}>
+          <div style={{ fontSize: 13, letterSpacing: "0.4em", color: "#b04040", textTransform: "uppercase", marginBottom: 12 }}>
+            ✦ My Collection ✦
+          </div>
+          <h1 style={{
+            fontSize: "clamp(2.2rem, 6vw, 4rem)",
+            fontWeight: 400,
+            letterSpacing: "0.05em",
+            margin: 0,
+            background: "linear-gradient(135deg, #f0e6d3 30%, #c8a87a 70%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            lineHeight: 1.1,
+          }}>
+            தமிழ் சினிமா
+          </h1>
+          <div style={{
+            fontSize: "clamp(0.9rem, 2vw, 1.1rem)",
+            color: "#8a7a6a",
+            letterSpacing: "0.25em",
+            textTransform: "uppercase",
+            marginTop: 8,
+          }}>
+            Tamil Cinema Watchlist
+          </div>
+          <div style={{ width: 60, height: 1, background: "linear-gradient(90deg, transparent, #b04040, transparent)", margin: "20px auto 0" }} />
+        </header>
+
+        {/* Controls bar */}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 32, flexWrap: "wrap" }}>
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search movies..."
+            style={{
+              flex: 1, minWidth: 200,
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 8,
+              padding: "10px 16px",
+              color: "#f0e6d3",
+              fontSize: 14,
+              outline: "none",
+              fontFamily: "inherit",
+            }}
+          />
+          <button
+            onClick={() => { setShowForm(true); setFormMode("imdb"); }}
+            style={{
+              background: "linear-gradient(135deg, #b04040, #8a2020)",
+              border: "none",
+              borderRadius: 8,
+              padding: "10px 20px",
+              color: "#fff",
+              fontSize: 14,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              letterSpacing: "0.05em",
+              whiteSpace: "nowrap",
+            }}
+          >
+            + Add Movie
+          </button>
+          <div style={{ color: "#5a4a3a", fontSize: 13 }}>
+            {movies.length} film{movies.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+
+        {/* Movie Grid */}
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 80, color: "#5a4a3a", fontSize: 18, letterSpacing: "0.1em" }}>
+            Loading your collection...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 80 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>🎬</div>
+            <div style={{ color: "#5a4a3a", fontSize: 18, letterSpacing: "0.05em" }}>
+              {movies.length === 0 ? "Your collection is empty. Add your first Tamil film!" : "No movies match your search."}
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+            gap: 24,
+          }}>
+            {filtered.map(movie => (
+              <MovieCard key={movie.id} movie={movie} onDelete={() => setDeleteConfirm(movie.id)} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Add Movie Modal */}
+      {showForm && (
+        <Modal onClose={() => setShowForm(false)}>
+          <div style={{ marginBottom: 20 }}>
+            <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 400, color: "#f0e6d3" }}>Add Movie</h2>
+            <p style={{ margin: 0, color: "#7a6a5a", fontSize: 13 }}>Choose how to add your film</p>
+          </div>
+
+          {/* Mode tabs */}
+          <div style={{ display: "flex", gap: 0, marginBottom: 24, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.1)" }}>
+            {["imdb", "manual"].map(mode => (
+              <button key={mode} onClick={() => setFormMode(mode)} style={{
+                flex: 1, padding: "10px 0", background: formMode === mode ? "rgba(176,64,64,0.3)" : "transparent",
+                border: "none", color: formMode === mode ? "#f0c080" : "#7a6a5a",
+                fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                letterSpacing: "0.08em", textTransform: "uppercase",
+                transition: "all 0.2s",
+              }}>
+                {mode === "imdb" ? "🔗 Paste IMDB Link" : "✏️ Enter Manually"}
+              </button>
+            ))}
+          </div>
+
+          {formMode === "imdb" ? (
+            <div>
+              <label style={{ display: "block", fontSize: 12, letterSpacing: "0.15em", color: "#8a7a6a", textTransform: "uppercase", marginBottom: 8 }}>
+                IMDB URL
+              </label>
+              <input
+                value={imdbInput}
+                onChange={e => setImdbInput(e.target.value)}
+                placeholder="https://www.imdb.com/title/tt..."
+                style={inputStyle}
+                onKeyDown={e => e.key === "Enter" && handleAddImdb()}
+              />
+              <p style={{ color: "#5a4a3a", fontSize: 12, marginTop: 8 }}>
+                Movie details will be fetched automatically from OMDB.
+              </p>
+              <button onClick={handleAddImdb} disabled={saving} style={btnStyle}>
+                {saving ? "Fetching..." : "Add Movie"}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {[
+                { key: "title", label: "Movie Title *", placeholder: "e.g. Vikram" },
+                { key: "year", label: "Year", placeholder: "e.g. 2022" },
+                { key: "imdbUrl", label: "IMDB URL *", placeholder: "https://www.imdb.com/title/tt..." },
+                { key: "image", label: "Poster Image URL", placeholder: "https://..." },
+              ].map(field => (
+                <div key={field.key}>
+                  <label style={{ display: "block", fontSize: 12, letterSpacing: "0.15em", color: "#8a7a6a", textTransform: "uppercase", marginBottom: 6 }}>
+                    {field.label}
+                  </label>
+                  <input
+                    value={manualForm[field.key]}
+                    onChange={e => setManualForm(p => ({ ...p, [field.key]: e.target.value }))}
+                    placeholder={field.placeholder}
+                    style={inputStyle}
+                  />
+                </div>
+              ))}
+              <button onClick={handleAddManual} disabled={saving} style={btnStyle}>
+                {saving ? "Saving..." : "Add Movie"}
+              </button>
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* Delete confirm modal */}
+      {deleteConfirm && (
+        <Modal onClose={() => setDeleteConfirm(null)} small>
+          <p style={{ color: "#f0e6d3", marginTop: 0 }}>Remove this movie from your collection?</p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => handleDelete(deleteConfirm)} style={{ ...btnStyle, flex: 1, background: "linear-gradient(135deg,#8a2020,#601010)" }}>Remove</button>
+            <button onClick={() => setDeleteConfirm(null)} style={{ ...btnStyle, flex: 1, background: "rgba(255,255,255,0.07)" }}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 30, left: "50%", transform: "translateX(-50%)",
+          background: toast.type === "error" ? "#5a1010" : "#1a3a1a",
+          border: `1px solid ${toast.type === "error" ? "#b04040" : "#407040"}`,
+          borderRadius: 10, padding: "12px 24px",
+          color: "#f0e6d3", fontSize: 14, zIndex: 1000,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+          animation: "fadeIn 0.3s ease",
+        }}>
+          {toast.msg}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+        input::placeholder { color: #4a3a2a; }
+        input:focus { border-color: rgba(176,64,64,0.5) !important; }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0a0a0f; } ::-webkit-scrollbar-thumb { background: #3a2a2a; border-radius: 3px; }
+      `}</style>
+    </div>
+  );
+}
+
+function MovieCard({ movie, onDelete }) {
+  const [hovered, setHovered] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        borderRadius: 10,
+        overflow: "hidden",
+        position: "relative",
+        background: "#141418",
+        border: "1px solid rgba(255,255,255,0.07)",
+        cursor: "pointer",
+        transition: "transform 0.25s ease, box-shadow 0.25s ease",
+        transform: hovered ? "translateY(-6px) scale(1.02)" : "none",
+        boxShadow: hovered ? "0 20px 50px rgba(0,0,0,0.7), 0 0 0 1px rgba(176,64,64,0.3)" : "0 4px 16px rgba(0,0,0,0.4)",
+        animation: "cardIn 0.4s ease both",
+      }}
+    >
+      {/* Poster */}
+      <div style={{ position: "relative", paddingTop: "150%", background: "#0d0d12" }}>
+        {movie.poster && !imgError ? (
+          <img
+            src={movie.poster}
+            alt={movie.title}
+            onError={() => setImgError(true)}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <div style={{
+            position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center",
+            background: "linear-gradient(135deg, #1a1015, #0d0d18)",
+            color: "#3a2a2a", gap: 8,
+          }}>
+            <div style={{ fontSize: 36 }}>🎬</div>
+            <div style={{ fontSize: 11, textAlign: "center", padding: "0 8px", color: "#5a4a3a" }}>{movie.title}</div>
+          </div>
+        )}
+
+        {/* Hover overlay */}
+        <div style={{
+          position: "absolute", inset: 0,
+          background: "linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 50%, transparent 100%)",
+          opacity: hovered ? 1 : 0,
+          transition: "opacity 0.25s ease",
+          display: "flex", flexDirection: "column", justifyContent: "flex-end",
+          padding: 14, gap: 8,
+        }}>
+          <a
+            href={movie.playUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{
+              display: "block", textAlign: "center",
+              background: "linear-gradient(135deg, #b04040, #8a2020)",
+              color: "#fff", padding: "8px 0",
+              borderRadius: 6, textDecoration: "none",
+              fontSize: 13, letterSpacing: "0.1em",
+              fontFamily: "Georgia, serif",
+            }}
+          >
+            ▶ Watch Now
+          </a>
+          <a
+            href={movie.imdbUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{
+              display: "block", textAlign: "center",
+              background: "rgba(255,200,50,0.15)",
+              color: "#f0c840", padding: "6px 0",
+              borderRadius: 6, textDecoration: "none",
+              fontSize: 12, letterSpacing: "0.08em",
+              border: "1px solid rgba(240,200,60,0.2)",
+            }}
+          >
+            IMDb Page
+          </a>
+        </div>
+
+        {/* Delete btn */}
+        <button
+          onClick={e => { e.stopPropagation(); onDelete(); }}
+          style={{
+            position: "absolute", top: 8, right: 8,
+            background: "rgba(0,0,0,0.6)", border: "none",
+            borderRadius: "50%", width: 28, height: 28,
+            color: "#f0e6d3", cursor: "pointer", fontSize: 14,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            opacity: hovered ? 1 : 0, transition: "opacity 0.2s",
+          }}
+        >×</button>
+      </div>
+
+      {/* Title */}
+      <div style={{ padding: "12px 12px 14px" }}>
+        <div style={{ fontSize: 13, fontWeight: 400, color: "#e0d0c0", lineHeight: 1.3, marginBottom: 4 }}>
+          {movie.title}
+        </div>
+        {movie.year && (
+          <div style={{ fontSize: 11, color: "#5a4a3a", letterSpacing: "0.1em" }}>{movie.year}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Modal({ children, onClose, small }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 500, padding: 20, backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: "#12121a",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 14,
+          padding: 28,
+          width: "100%",
+          maxWidth: small ? 380 : 480,
+          maxHeight: "90vh",
+          overflowY: "auto",
+          boxShadow: "0 30px 80px rgba(0,0,0,0.8)",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const inputStyle = {
+  width: "100%",
+  background: "rgba(255,255,255,0.05)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 8,
+  padding: "10px 14px",
+  color: "#f0e6d3",
+  fontSize: 14,
+  outline: "none",
+  fontFamily: "Georgia, serif",
+  transition: "border-color 0.2s",
+};
+
+const btnStyle = {
+  width: "100%",
+  background: "linear-gradient(135deg, #b04040, #8a2020)",
+  border: "none",
+  borderRadius: 8,
+  padding: "12px 0",
+  color: "#fff",
+  fontSize: 14,
+  cursor: "pointer",
+  fontFamily: "Georgia, serif",
+  letterSpacing: "0.08em",
+  marginTop: 4,
+};
